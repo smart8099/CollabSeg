@@ -24,4 +24,7 @@ dist/
 .DS_Store
 .idea/
 .vscode/
+
+# Cluster job scripts
+slurm*.sh
 .pycache_local/
