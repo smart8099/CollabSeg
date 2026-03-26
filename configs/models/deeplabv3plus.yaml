@@ -1,0 +1,8 @@
+model:
+  name: deeplabv3plus
+  params:
+    in_channels: 3
+    num_classes: 1
+    encoder_widths: [64, 128, 256, 512]
+    aspp_channels: 256
+    decoder_channels: 128

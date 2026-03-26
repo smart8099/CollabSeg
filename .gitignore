@@ -1,0 +1,27 @@
+# Datasets
+datasets/
+
+# Training and evaluation artifacts
+outputs/
+logs/
+
+# Virtual environments
+venv/
+.venv/
+
+# Python cache and build artifacts
+__pycache__/
+*.py[cod]
+*.so
+.pytest_cache/
+.mypy_cache/
+.pycache_local/
+build/
+dist/
+*.egg-info/
+
+# OS/editor files
+.DS_Store
+.idea/
+.vscode/
+.pycache_local/

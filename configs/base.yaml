@@ -1,0 +1,44 @@
+experiment_name: polyp_segmentation_baseline
+seed: 42
+output_dir: outputs
+device: cuda
+num_workers: 4
+pin_memory: true
+
+data:
+  root_dir: datasets/agentpolyp_2504/unified_split
+  train_csv: datasets/agentpolyp_2504/unified_split/manifests/train.csv
+  val_csv: datasets/agentpolyp_2504/unified_split/manifests/val.csv
+  test_csv: datasets/agentpolyp_2504/unified_split/manifests/test.csv
+  image_size: 352
+  normalize_mean: [0.485, 0.456, 0.406]
+  normalize_std: [0.229, 0.224, 0.225]
+  augment:
+    horizontal_flip_prob: 0.5
+    vertical_flip_prob: 0.0
+    rotate90_prob: 0.5
+    color_jitter_prob: 0.3
+    brightness: 0.15
+    contrast: 0.15
+
+train:
+  epochs: 80
+  batch_size: 8
+  learning_rate: 0.0001
+  weight_decay: 0.00001
+  optimizer: adamw
+  scheduler: cosine
+  min_learning_rate: 0.000001
+  mixed_precision: true
+  grad_clip_norm: 1.0
+  smoke_run_batches: 0
+
+loss:
+  bce_weight: 0.5
+  dice_weight: 0.5
+
+model:
+  name: unet
+  params:
+    in_channels: 3
+    num_classes: 1

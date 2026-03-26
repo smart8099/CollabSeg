@@ -1,0 +1,7 @@
+model:
+  name: unet
+  params:
+    in_channels: 3
+    num_classes: 1
+    features: [64, 128, 256, 512]
+    norm: bn
