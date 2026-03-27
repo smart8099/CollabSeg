@@ -2,6 +2,58 @@
 
 This note describes the current heuristic ensemble flow graphically and at a high level.
 
+## Dataset Summary
+
+Total samples: `2248`
+
+### Split Counts
+
+| Split | Samples |
+|---|---:|
+| Train | 1797 |
+| Val | 224 |
+| Test | 227 |
+
+### Per-Dataset Composition
+
+| Dataset | Train | Val | Test |
+|---|---:|---:|---:|
+| CVC-300 | 48 | 6 | 6 |
+| CVC-ClinicDB | 489 | 61 | 62 |
+| CVC-ColonDB | 304 | 38 | 38 |
+| ETIS-LaribPolypDB | 156 | 19 | 21 |
+| Kvasir | 800 | 100 | 100 |
+
+## Individual Model Test Results
+
+These are the test results used as the main reference for comparing the standalone models with the heuristic ensemble tool.
+
+| Method | Dice | IoU |
+|---|---:|---:|
+| UNet | 0.8552 | 0.7553 |
+| UNet++ | 0.8697 | 0.7750 |
+| UNetV2  | 0.8101 | 0.6915 |
+| DeepLabV3+ | 0.8651 | 0.7680 |
+| CollabSeg | 0.8641 | 0.7977 |
+
+### Current Heuristic Tool Result
+
+The current heuristic ensemble tool  achieved:
+
+- Dice: `0.8641`
+- IoU: `0.7977`
+
+
+### CollabSeg Per-Dataset Results
+
+| Dataset | Dice | IoU |
+|---|---:|---:|
+| CVC-300 | 0.9458 | 0.8987 |
+| CVC-ClinicDB | 0.9016 | 0.8432 |
+| CVC-ColonDB | 0.8828 | 0.8198 |
+| ETIS-LaribPolypDB | 0.7579 | 0.6802 |
+| Kvasir | 0.8513 | 0.7797 |
+|Our tool | 0.8641
 ## Overall Flow
 
 ```text
@@ -32,10 +84,19 @@ This note describes the current heuristic ensemble flow graphically and at a hig
                 | Heuristic Assessment      |
                 | for Each Model Output     |
                 | - confidence              |
+                |   foreground + background |
                 | - agreement               |
+                |   overlap with other      |
+                |   model outputs           |
                 | - shape                   |
+                |   area plausibility +     |
+                |   connectivity            |
                 | - boundary                |
+                |   contour consistency     |
+                |   with image edges        |
                 | - prompt consistency      |
+                |   size/location match     |
+                |   to prompt hints         |
                 +-------------+-------------+
                               |
                               v

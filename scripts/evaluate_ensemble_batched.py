@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Evaluate the ensemble on a dataset using batched model inference."""
+"""Evaluate the ensemble on a dataset using batched model inference in standalone evaluation space."""
 
 from __future__ import annotations
 
@@ -48,6 +48,13 @@ def _load_mask(path: Path) -> np.ndarray:
     return (mask > 127).astype(np.uint8)
 
 
+def _load_mask_resized(path: Path, image_size: int) -> np.ndarray:
+    """Load a binary mask from disk and resize it into evaluation space."""
+    mask = Image.open(path).convert("L").resize((image_size, image_size), Image.NEAREST)
+    mask_np = np.asarray(mask, dtype=np.uint8)
+    return (mask_np > 127).astype(np.uint8)
+
+
 def _preprocess_batch(images: list[Image.Image], image_size: int, mean: list[float], std: list[float]) -> torch.Tensor:
     """Resize and normalize a list of PIL images into a batch tensor."""
     batch = []
@@ -85,20 +92,17 @@ def _predict_for_model(spec, rows: list[dict[str, str]], root_dir: Path, device:
             logits = logits[-1]
         probabilities = torch.sigmoid(logits).detach().cpu()
 
-        for row, image, prob_map in zip(batch_rows, batch_images, probabilities):
-            original_size = image.size
+        for row, prob_map in zip(batch_rows, probabilities):
             prob_np = np.asarray(prob_map[0].tolist(), dtype=np.float32)
-            prob_image = Image.fromarray((prob_np * 255).astype(np.uint8)).resize(original_size, Image.BILINEAR)
-            prob_resized = np.asarray(prob_image, dtype=np.float32) / 255.0
-            mask = (prob_resized >= threshold).astype(np.uint8)
-            confidence = float(prob_resized[mask == 1].mean()) if mask.any() else float(prob_resized.mean())
+            mask = (prob_np >= threshold).astype(np.uint8)
+            confidence = float(prob_np[mask == 1].mean()) if mask.any() else float(prob_np.mean())
             results[row["sample_id"]] = PredictionRecord(
                 model_name=spec.name,
                 logits=prob_map.unsqueeze(0),
-                probability_map=prob_resized,
+                probability_map=prob_np,
                 mask=mask,
                 confidence=confidence,
-                metadata={"original_size": list(original_size)},
+                metadata={"evaluation_size": spec.image_size},
             )
     return results
 
@@ -148,8 +152,10 @@ def main() -> None:
     for row in rows:
         image_path = root_dir / row["image_path"]
         mask_path = root_dir / row["mask_path"]
-        image_np = np.asarray(_load_rgb(image_path))
-        target_mask = _load_mask(mask_path)
+        image = _load_rgb(image_path)
+        image_for_features = image.resize((registry[0].image_size, registry[0].image_size), Image.BILINEAR)
+        image_np = np.asarray(image_for_features)
+        target_mask = _load_mask_resized(mask_path, registry[0].image_size)
 
         predictions = [predictions_by_model[spec.name][row["sample_id"]] for spec in registry]
         predictions = [
