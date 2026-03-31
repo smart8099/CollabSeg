@@ -28,3 +28,4 @@ dist/
 # Cluster job scripts
 slurm*.sh
 .pycache_local/
+CLAUDE.md
