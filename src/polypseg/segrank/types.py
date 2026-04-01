@@ -17,6 +17,7 @@ class DatasetDescriptor:
     grayscale_std: float
     grayscale_entropy: float
     edge_density: float
+    embedding: list[float]
 
     def to_dict(self) -> dict[str, Any]:
         """Return a JSON-serializable mapping."""
@@ -36,6 +37,7 @@ class MorphologyDescriptor:
     mean_centroid_x: float
     mean_centroid_y: float
     mean_empty_mask_ratio: float
+    embedding: list[float]
 
     def to_dict(self) -> dict[str, Any]:
         """Return a JSON-serializable mapping."""

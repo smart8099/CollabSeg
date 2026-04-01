@@ -51,6 +51,7 @@ def main() -> None:
     from polypseg.segrank import (
         ModelDatasetArtifact,
         aggregate_evidence,
+        aggregate_embedding_vectors,
         aggregate_image_descriptors,
         aggregate_mask_morphology,
         compute_image_descriptor,
@@ -76,12 +77,19 @@ def main() -> None:
 
     artifacts_dir = ensure_dir(ROOT / args.artifacts_dir)
     datasets_dir = ensure_dir(artifacts_dir / "datasets")
+    embeddings_dir = ensure_dir(artifacts_dir / "embeddings")
+    dataset_embeddings_dir = ensure_dir(embeddings_dir / "datasets")
+    image_embeddings_dir = ensure_dir(embeddings_dir / "images")
     models_dir = ensure_dir(artifacts_dir / "models")
 
     per_dataset_image_descriptors: dict[str, list[dict[str, float | list[float]]]] = defaultdict(list)
     per_dataset_morphology: dict[str, list[dict[str, float]]] = defaultdict(list)
     per_model_dataset_metrics: dict[tuple[str, str], list[dict[str, float]]] = defaultdict(list)
     per_model_dataset_evidence: dict[tuple[str, str], list[dict[str, float]]] = defaultdict(list)
+    per_dataset_image_embeddings: dict[str, list[list[float]]] = defaultdict(list)
+    per_dataset_morph_embeddings: dict[str, list[list[float]]] = defaultdict(list)
+    per_model_dataset_response_embeddings: dict[tuple[str, str], list[list[float]]] = defaultdict(list)
+    per_image_embedding_records: dict[str, list[dict[str, object]]] = defaultdict(list)
 
     for index, row in enumerate(rows, start=1):
         image_path = root_dir / row["image_path"]
@@ -92,13 +100,23 @@ def main() -> None:
         image_np = np.asarray(image, dtype=np.uint8)
         target_mask = _load_mask(mask_path)
 
-        per_dataset_image_descriptors[source_dataset].append(compute_image_descriptor(image_np))
-        per_dataset_morphology[source_dataset].append(compute_mask_morphology(target_mask))
+        image_descriptor = compute_image_descriptor(image_np)
+        morphology_features = compute_mask_morphology(target_mask)
+        per_dataset_image_descriptors[source_dataset].append(image_descriptor)
+        per_dataset_morphology[source_dataset].append(morphology_features)
+        per_dataset_image_embeddings[source_dataset].append(list(image_descriptor["embedding"]))
+        per_dataset_morph_embeddings[source_dataset].append(list(morphology_features["embedding"]))
 
         predictions = [
             predictor.predict(image=image, prompt=args.prompt, threshold=threshold)
             for predictor in predictors
         ]
+        image_record = {
+            "sample_id": row["sample_id"],
+            "image_embedding": image_descriptor["embedding"],
+            "morphology_embedding": morphology_features["embedding"],
+            "model_response_embeddings": {},
+        }
         for prediction in predictions:
             evidence = compute_prediction_evidence(
                 prediction=prediction,
@@ -111,6 +129,10 @@ def main() -> None:
             key = (prediction.model_name, source_dataset)
             per_model_dataset_metrics[key].append(metrics)
             per_model_dataset_evidence[key].append(evidence)
+            per_model_dataset_response_embeddings[key].append(list(evidence["embedding"]))
+            image_record["model_response_embeddings"][prediction.model_name] = evidence["embedding"]
+
+        per_image_embedding_records[source_dataset].append(image_record)
 
         if index % 25 == 0:
             print(json.dumps({"processed_samples": index, "total_samples": len(rows)}))
@@ -122,6 +144,20 @@ def main() -> None:
             "morphology": aggregate_mask_morphology(per_dataset_morphology[source_dataset]).to_dict(),
         }
         write_json(datasets_dir / f"{source_dataset}.json", dataset_payload[source_dataset])
+        write_json(
+            dataset_embeddings_dir / f"{source_dataset}.json",
+            {
+                "image_embedding_summary": aggregate_embedding_vectors(per_dataset_image_embeddings[source_dataset]),
+                "morphology_embedding_summary": aggregate_embedding_vectors(per_dataset_morph_embeddings[source_dataset]),
+            },
+        )
+        write_json(
+            image_embeddings_dir / f"{source_dataset}.json",
+            {
+                "source_dataset": source_dataset,
+                "records": per_image_embedding_records[source_dataset],
+            },
+        )
 
     model_dataset_payload: dict[str, dict[str, object]] = defaultdict(dict)
     for model_name, source_dataset in sorted(per_model_dataset_metrics):
@@ -135,6 +171,9 @@ def main() -> None:
             evidence=aggregate_evidence(per_model_dataset_evidence[(model_name, source_dataset)]),
         )
         model_dataset_payload[model_name][source_dataset] = artifact.to_dict()
+        model_dataset_payload[model_name][source_dataset]["response_embedding_summary"] = aggregate_embedding_vectors(
+            per_model_dataset_response_embeddings[(model_name, source_dataset)]
+        )
 
     operating_ranges: dict[str, dict[str, object]] = {}
     for model_name, dataset_map in sorted(model_dataset_payload.items()):

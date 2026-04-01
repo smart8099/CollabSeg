@@ -7,6 +7,7 @@ from typing import Any
 
 import numpy as np
 
+from .embeddings import response_embedding_from_evidence
 from .types import EvidenceSummary
 
 
@@ -109,6 +110,7 @@ def compute_prediction_evidence(
             "prompt_used": float(bool(prompt.strip())),
         }
     )
+    features["embedding"] = response_embedding_from_evidence(features)
     return features
 
 
@@ -117,7 +119,7 @@ def aggregate_evidence(features: list[dict[str, float]]) -> EvidenceSummary:
     if not features:
         raise ValueError("Cannot aggregate an empty evidence feature list.")
 
-    keys = sorted(features[0].keys())
+    keys = sorted(key for key in features[0].keys() if key != "embedding")
     means = {key: float(np.mean([item[key] for item in features])) for key in keys}
     stds = {key: float(np.std([item[key] for item in features])) for key in keys}
     return EvidenceSummary(

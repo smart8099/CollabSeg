@@ -6,6 +6,7 @@ from collections import deque
 
 import numpy as np
 
+from .embeddings import aggregate_embedding_vectors, morphology_embedding_from_features
 from .types import MorphologyDescriptor
 
 
@@ -70,7 +71,7 @@ def compute_mask_morphology(mask: np.ndarray) -> dict[str, float]:
         centroid_y = 0.5
         empty_mask = 1.0
 
-    return {
+    features = {
         "area_ratio": area_ratio,
         "component_count": components,
         "boundary_ratio": boundary_ratio,
@@ -79,12 +80,16 @@ def compute_mask_morphology(mask: np.ndarray) -> dict[str, float]:
         "centroid_y": centroid_y,
         "empty_mask": empty_mask,
     }
+    features["embedding"] = morphology_embedding_from_features(features)
+    return features
 
 
 def aggregate_mask_morphology(features: list[dict[str, float]]) -> MorphologyDescriptor:
     """Aggregate per-mask morphology features into a dataset summary."""
     if not features:
         raise ValueError("Cannot aggregate an empty morphology feature list.")
+
+    embedding_summary = aggregate_embedding_vectors([item["embedding"] for item in features])
 
     return MorphologyDescriptor(
         num_samples=len(features),
@@ -96,4 +101,5 @@ def aggregate_mask_morphology(features: list[dict[str, float]]) -> MorphologyDes
         mean_centroid_x=float(np.mean([item["centroid_x"] for item in features])),
         mean_centroid_y=float(np.mean([item["centroid_y"] for item in features])),
         mean_empty_mask_ratio=float(np.mean([item["empty_mask"] for item in features])),
+        embedding=embedding_summary["mean"],
     )

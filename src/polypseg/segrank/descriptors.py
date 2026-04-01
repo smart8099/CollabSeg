@@ -6,6 +6,7 @@ import math
 
 import numpy as np
 
+from .embeddings import aggregate_embedding_vectors, image_embedding_from_image
 from .types import DatasetDescriptor
 
 
@@ -34,6 +35,7 @@ def compute_image_descriptor(image_np: np.ndarray) -> dict[str, float | list[flo
         "grayscale_std": float(gray.std()),
         "grayscale_entropy": entropy,
         "edge_density": edge_density,
+        "embedding": image_embedding_from_image(image_np),
     }
 
 
@@ -44,6 +46,7 @@ def aggregate_image_descriptors(descriptors: list[dict[str, float | list[float]]
 
     rgb_mean = np.asarray([item["rgb_mean"] for item in descriptors], dtype=np.float32)
     rgb_std = np.asarray([item["rgb_std"] for item in descriptors], dtype=np.float32)
+    embedding_summary = aggregate_embedding_vectors([item["embedding"] for item in descriptors])
 
     return DatasetDescriptor(
         num_samples=len(descriptors),
@@ -53,4 +56,5 @@ def aggregate_image_descriptors(descriptors: list[dict[str, float | list[float]]
         grayscale_std=float(np.mean([item["grayscale_std"] for item in descriptors])),
         grayscale_entropy=float(np.mean([item["grayscale_entropy"] for item in descriptors])),
         edge_density=float(np.mean([item["edge_density"] for item in descriptors])),
+        embedding=embedding_summary["mean"],
     )
