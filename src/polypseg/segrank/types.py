@@ -73,3 +73,32 @@ class ModelDatasetArtifact:
         payload = asdict(self)
         payload["evidence"] = self.evidence.to_dict()
         return payload
+
+
+@dataclass
+class RetrievedDataset:
+    """Describe one retrieved source dataset and its similarity to a target."""
+
+    source_dataset: str
+    descriptor_similarity: float
+    morphology_similarity: float
+    combined_similarity: float
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-serializable mapping."""
+        return asdict(self)
+
+
+@dataclass
+class ModelRankingRecord:
+    """Capture proposal, prior, and final scores for one model."""
+
+    model_name: str
+    proposal_score: float
+    prior_score: float
+    final_score: float
+    evidence_summary: dict[str, float]
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-serializable mapping."""
+        return asdict(self)
