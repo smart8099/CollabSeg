@@ -71,7 +71,6 @@ def compute_prediction_evidence(
     prediction: Any,
     image_np: np.ndarray,
     peer_predictions: list[Any],
-    prompt: str = "",
 ) -> dict[str, float]:
     """Compute reusable evidence features for one prediction."""
     mask = prediction.mask
@@ -107,7 +106,6 @@ def compute_prediction_evidence(
             "mean_entropy": float(entropy_map.mean()),
             "foreground_entropy": float(entropy_map[mask].mean()) if mask.any() else 0.0,
             "confidence_margin": float(np.abs(prob_map - 0.5).mean()),
-            "prompt_used": float(bool(prompt.strip())),
         }
     )
     features["embedding"] = response_embedding_from_evidence(features)

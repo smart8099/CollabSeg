@@ -43,7 +43,6 @@ def main() -> None:
     parser.add_argument("--root-dir", type=str, default="datasets/agentpolyp_2504/unified_split")
     parser.add_argument("--artifacts-dir", type=str, default="artifacts/source_artifacts")
     parser.add_argument("--device", type=str, default="cuda")
-    parser.add_argument("--prompt", type=str, default="")
     parser.add_argument("--max-samples", type=int, default=0)
     args = parser.parse_args()
 
@@ -108,7 +107,7 @@ def main() -> None:
         per_dataset_morph_embeddings[source_dataset].append(list(morphology_features["embedding"]))
 
         predictions = [
-            predictor.predict(image=image, prompt=args.prompt, threshold=threshold)
+            predictor.predict(image=image, threshold=threshold)
             for predictor in predictors
         ]
         image_record = {
@@ -122,7 +121,6 @@ def main() -> None:
                 prediction=prediction,
                 image_np=image_np,
                 peer_predictions=predictions,
-                prompt=args.prompt,
             )
             metrics = dice_iou(prediction.mask, target_mask)
             metrics["foreground_area_error"] = float(abs(prediction.mask.mean() - target_mask.mean()))

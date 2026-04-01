@@ -66,7 +66,6 @@ def response_embedding_from_evidence(features: dict[str, float]) -> list[float]:
         "foreground_confidence",
         "foreground_entropy",
         "mean_entropy",
-        "prompt_used",
     ]
     return [float(features[key]) for key in keys]
 

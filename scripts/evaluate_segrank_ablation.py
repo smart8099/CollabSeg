@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run dataset-level SegRank proposal and determination on a target manifest."""
+"""Evaluate SegRank proposal, prior, and full determination against oracle model choice."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ import argparse
 import csv
 import json
 import sys
-from collections import defaultdict
+from collections import Counter, defaultdict
 from pathlib import Path
 
 import numpy as np
@@ -28,9 +28,23 @@ def _load_rows(csv_path: Path, max_samples: int) -> list[dict[str, str]]:
     return rows
 
 
+def _load_mask(mask_path: Path) -> np.ndarray:
+    """Load a binary mask from disk."""
+    mask = np.asarray(Image.open(mask_path).convert("L"), dtype=np.uint8)
+    return (mask > 127).astype(np.uint8)
+
+
+def _aggregate(records: list[dict[str, float]]) -> dict[str, float]:
+    """Average numeric fields across records."""
+    if not records:
+        return {}
+    keys = [key for key in records[0] if key not in {"sample_id", "source_dataset", "oracle_model", "proposal_top_model", "prior_top_model", "full_top_model"}]
+    return {key: float(np.mean([record[key] for record in records])) for key in keys}
+
+
 def main() -> None:
-    """Parse arguments, run probe inference, and emit a SegRank ranking report."""
-    parser = argparse.ArgumentParser(description="Run dataset-level SegRank ranking on a target manifest.")
+    """Parse arguments, run ablations, and compare them against the oracle best model."""
+    parser = argparse.ArgumentParser(description="Evaluate SegRank ablations on a labeled target manifest.")
     parser.add_argument("--ensemble-config", type=str, default="configs/ensemble/default.yaml")
     parser.add_argument("--artifacts-dir", type=str, default="artifacts/source_artifacts")
     parser.add_argument("--target-csv", type=str, required=True)
@@ -41,7 +55,7 @@ def main() -> None:
     parser.add_argument("--output-json", type=str, default="")
     args = parser.parse_args()
 
-    from polypseg.ensemble import build_predictors, build_registry, load_registry_config, resolve_device
+    from polypseg.ensemble import build_predictors, build_registry, dice_iou, load_registry_config, resolve_device
     from polypseg.segrank import (
         aggregate_evidence,
         aggregate_image_descriptors,
@@ -73,10 +87,13 @@ def main() -> None:
     target_image_descriptors: list[dict[str, float | list[float]]] = []
     target_morphology_features: list[dict[str, float]] = []
     evidence_by_model: dict[str, list[dict[str, float]]] = defaultdict(list)
+    per_model_dice: dict[str, list[float]] = defaultdict(list)
+    per_sample_records: list[dict[str, float | str]] = []
 
     for row in rows:
         image = Image.open(root_dir / row["image_path"]).convert("RGB")
         image_np = np.asarray(image, dtype=np.uint8)
+        target_mask = _load_mask(root_dir / row["mask_path"])
         target_image_descriptors.append(compute_image_descriptor(image_np))
 
         predictions = [
@@ -87,6 +104,8 @@ def main() -> None:
         consensus_mask = (consensus_prob >= threshold).astype(np.uint8)
         target_morphology_features.append(compute_mask_morphology(consensus_mask))
 
+        sample_model_scores: dict[str, float] = {}
+        sample_model_dice: dict[str, float] = {}
         for prediction in predictions:
             evidence = compute_prediction_evidence(
                 prediction=prediction,
@@ -94,6 +113,22 @@ def main() -> None:
                 peer_predictions=predictions,
             )
             evidence_by_model[prediction.model_name].append(evidence)
+            sample_model_scores[prediction.model_name] = score_proposal_from_evidence(evidence)
+            dice = float(dice_iou(prediction.mask, target_mask)["dice"])
+            sample_model_dice[prediction.model_name] = dice
+            per_model_dice[prediction.model_name].append(dice)
+
+        oracle_model = max(sample_model_dice.items(), key=lambda item: item[1])[0]
+        proposal_top_model = max(sample_model_scores.items(), key=lambda item: item[1])[0]
+        per_sample_records.append(
+            {
+                "sample_id": row["sample_id"],
+                "source_dataset": row["source_dataset"],
+                "oracle_model": oracle_model,
+                "proposal_top_model": proposal_top_model,
+                "proposal_hit_oracle": float(proposal_top_model == oracle_model),
+            }
+        )
 
     descriptor_summary = aggregate_image_descriptors(target_image_descriptors)
     morphology_summary = aggregate_mask_morphology(target_morphology_features)
@@ -114,21 +149,43 @@ def main() -> None:
     prior_scores = compute_prior_scores(artifacts_summary=artifacts_summary, retrieved_datasets=retrieved)
     proposal_margin = summarize_proposal_margin(proposal_scores)
     alpha = compute_arbitration_alpha(proposal_margin=proposal_margin, retrieved_datasets=retrieved)
-    ranking = determine_final_ranking(
+    full_ranking = determine_final_ranking(
         proposal_scores=proposal_scores,
         prior_scores=prior_scores,
         alpha=alpha,
         evidence_means_by_model=evidence_means_by_model,
     )
 
+    proposal_top_model = max(proposal_scores.items(), key=lambda item: item[1])[0]
+    prior_top_model = max(prior_scores.items(), key=lambda item: item[1])[0]
+    full_top_model = full_ranking[0].model_name
+
+    for record in per_sample_records:
+        oracle_model = str(record["oracle_model"])
+        record["prior_top_model"] = prior_top_model
+        record["full_top_model"] = full_top_model
+        record["prior_hit_oracle"] = float(prior_top_model == oracle_model)
+        record["full_hit_oracle"] = float(full_top_model == oracle_model)
+
+    standalone_mean_dice = {
+        model_name: float(np.mean(scores))
+        for model_name, scores in sorted(per_model_dice.items())
+    }
+
     payload = {
         "num_samples": len(rows),
-        "target_descriptor": descriptor_summary.to_dict(),
-        "target_morphology": morphology_summary.to_dict(),
         "retrieved_datasets": [item.to_dict() for item in retrieved],
         "proposal_margin": proposal_margin,
         "alpha": alpha,
-        "ranking": [item.to_dict() for item in ranking],
+        "standalone_mean_dice": standalone_mean_dice,
+        "proposal_top_model": proposal_top_model,
+        "prior_top_model": prior_top_model,
+        "full_top_model": full_top_model,
+        "proposal_hit_oracle_rate": float(np.mean([record["proposal_hit_oracle"] for record in per_sample_records])),
+        "prior_hit_oracle_rate": float(np.mean([record["prior_hit_oracle"] for record in per_sample_records])),
+        "full_hit_oracle_rate": float(np.mean([record["full_hit_oracle"] for record in per_sample_records])),
+        "oracle_model_distribution": dict(Counter(str(record["oracle_model"]) for record in per_sample_records)),
+        "per_sample": per_sample_records,
     }
 
     print(json.dumps(payload, indent=2))
