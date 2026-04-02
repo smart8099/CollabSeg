@@ -53,6 +53,8 @@ def main() -> None:
         aggregate_embedding_vectors,
         aggregate_image_descriptors,
         aggregate_mask_morphology,
+        composite_metrics,
+        compute_utility_statistics,
         compute_image_descriptor,
         compute_mask_morphology,
         compute_prediction_evidence,
@@ -73,6 +75,13 @@ def main() -> None:
         rows = list(csv.DictReader(handle))
     if args.max_samples > 0:
         rows = rows[: args.max_samples]
+
+    utility_weights = {
+        "dice_norm": 0.40,
+        "hd95_good": 0.20,
+        "assd_good": 0.20,
+        "topo_norm": 0.20,
+    }
 
     artifacts_dir = ensure_dir(ROOT / args.artifacts_dir)
     datasets_dir = ensure_dir(artifacts_dir / "datasets")
@@ -122,8 +131,7 @@ def main() -> None:
                 image_np=image_np,
                 peer_predictions=predictions,
             )
-            metrics = dice_iou(prediction.mask, target_mask)
-            metrics["foreground_area_error"] = float(abs(prediction.mask.mean() - target_mask.mean()))
+            metrics = composite_metrics(prediction.mask, target_mask, dice_iou(prediction.mask, target_mask))
             key = (prediction.model_name, source_dataset)
             per_model_dataset_metrics[key].append(metrics)
             per_model_dataset_evidence[key].append(evidence)
@@ -173,10 +181,15 @@ def main() -> None:
             per_model_dataset_response_embeddings[(model_name, source_dataset)]
         )
 
+    utility_stats = compute_utility_statistics(
+        model_dataset_payload=model_dataset_payload,
+        weights=utility_weights,
+    )
+
     operating_ranges: dict[str, dict[str, object]] = {}
     for model_name, dataset_map in sorted(model_dataset_payload.items()):
         scores = {
-            dataset_name: float(payload["metrics_mean"]["dice"])
+            dataset_name: float(payload.get("utility", payload["metrics_mean"]["dice"]))
             for dataset_name, payload in dataset_map.items()
         }
         if not scores:
@@ -198,6 +211,10 @@ def main() -> None:
             "descriptor_centroid": {
                 "rgb_mean": centroid_rgb_mean.astype(float).tolist(),
                 "edge_density": centroid_edge_density,
+                "embedding": np.asarray(
+                    [dataset_payload[name]["descriptor"]["embedding"] for name in selected],
+                    dtype=np.float32,
+                ).mean(axis=0).astype(float).tolist(),
             },
         }
         write_json(models_dir / f"{model_name}.json", model_dataset_payload[model_name])
@@ -209,6 +226,7 @@ def main() -> None:
         "datasets": dataset_payload,
         "models": model_dataset_payload,
         "operating_ranges": operating_ranges,
+        "utility_statistics": utility_stats,
     }
     write_json(artifacts_dir / "summary.json", summary)
     print(json.dumps({"artifacts_dir": str(artifacts_dir), "num_samples": len(rows)}, indent=2))

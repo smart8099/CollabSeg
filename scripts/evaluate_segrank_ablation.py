@@ -51,6 +51,7 @@ def main() -> None:
     parser.add_argument("--root-dir", type=str, default="datasets/agentpolyp_2504/unified_split")
     parser.add_argument("--device", type=str, default="cuda")
     parser.add_argument("--max-samples", type=int, default=0)
+    parser.add_argument("--prescreen-top-k", type=int, default=0)
     parser.add_argument("--top-k-retrieval", type=int, default=3)
     parser.add_argument("--output-json", type=str, default="")
     args = parser.parse_args()
@@ -68,7 +69,9 @@ def main() -> None:
         determine_final_ranking,
         load_source_artifacts,
         retrieve_similar_datasets,
+        score_model_compatibility,
         score_proposal_from_evidence,
+        select_top_compatible_models,
         summarize_proposal_margin,
         write_json,
     )
@@ -85,6 +88,26 @@ def main() -> None:
     root_dir = ROOT / args.root_dir
 
     target_image_descriptors: list[dict[str, float | list[float]]] = []
+    for row in rows:
+        image = Image.open(root_dir / row["image_path"]).convert("RGB")
+        image_np = np.asarray(image, dtype=np.uint8)
+        target_image_descriptors.append(compute_image_descriptor(image_np))
+
+    descriptor_summary = aggregate_image_descriptors(target_image_descriptors)
+    compatibility_scores = score_model_compatibility(
+        artifacts_summary=artifacts_summary,
+        target_descriptor_embedding=descriptor_summary.embedding,
+    )
+    selected_model_names = select_top_compatible_models(
+        compatibility_scores=compatibility_scores,
+        top_k=int(args.prescreen_top_k),
+    )
+    selected_name_set = set(selected_model_names)
+    selected_predictors = [predictor for predictor in predictors if predictor.spec.name in selected_name_set]
+    if not selected_predictors:
+        selected_predictors = predictors
+        selected_model_names = [predictor.spec.name for predictor in predictors]
+
     target_morphology_features: list[dict[str, float]] = []
     evidence_by_model: dict[str, list[dict[str, float]]] = defaultdict(list)
     per_model_dice: dict[str, list[float]] = defaultdict(list)
@@ -94,11 +117,10 @@ def main() -> None:
         image = Image.open(root_dir / row["image_path"]).convert("RGB")
         image_np = np.asarray(image, dtype=np.uint8)
         target_mask = _load_mask(root_dir / row["mask_path"])
-        target_image_descriptors.append(compute_image_descriptor(image_np))
 
         predictions = [
             predictor.predict(image=image, threshold=threshold)
-            for predictor in predictors
+            for predictor in selected_predictors
         ]
         consensus_prob = np.mean([prediction.probability_map for prediction in predictions], axis=0)
         consensus_mask = (consensus_prob >= threshold).astype(np.uint8)
@@ -130,7 +152,6 @@ def main() -> None:
             }
         )
 
-    descriptor_summary = aggregate_image_descriptors(target_image_descriptors)
     morphology_summary = aggregate_mask_morphology(target_morphology_features)
     retrieved = retrieve_similar_datasets(
         artifacts_summary=artifacts_summary,
@@ -175,6 +196,8 @@ def main() -> None:
     payload = {
         "num_samples": len(rows),
         "retrieved_datasets": [item.to_dict() for item in retrieved],
+        "compatibility_scores": compatibility_scores,
+        "selected_models": selected_model_names,
         "proposal_margin": proposal_margin,
         "alpha": alpha,
         "standalone_mean_dice": standalone_mean_dice,

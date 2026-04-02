@@ -32,8 +32,13 @@ class MorphologyDescriptor:
     mean_area_ratio: float
     std_area_ratio: float
     mean_component_count: float
+    mean_compactness: float
+    mean_branching_index: float
+    mean_volume_distribution_entropy: float
     mean_boundary_ratio: float
+    mean_boundary_tortuosity: float
     mean_bbox_aspect_ratio: float
+    std_bbox_aspect_ratio: float
     mean_centroid_x: float
     mean_centroid_y: float
     mean_empty_mask_ratio: float

@@ -45,7 +45,11 @@ def morphology_embedding_from_features(features: dict[str, float]) -> list[float
     keys = [
         "area_ratio",
         "component_count",
+        "compactness",
+        "branching_index",
+        "volume_distribution_entropy",
         "boundary_ratio",
+        "boundary_tortuosity",
         "bbox_aspect_ratio",
         "centroid_x",
         "centroid_y",

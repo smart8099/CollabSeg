@@ -20,8 +20,8 @@ def compute_prior_scores(
             if retrieved.source_dataset not in dataset_map:
                 continue
             similarity = max(retrieved.combined_similarity, 0.0)
-            dice = float(dataset_map[retrieved.source_dataset]["metrics_mean"]["dice"])
-            weighted_sum += similarity * dice
+            score = float(dataset_map[retrieved.source_dataset].get("utility", dataset_map[retrieved.source_dataset]["metrics_mean"]["dice"]))
+            weighted_sum += similarity * score
             weight_total += similarity
         prior_scores[model_name] = weighted_sum / weight_total if weight_total > 0 else 0.0
     return prior_scores
