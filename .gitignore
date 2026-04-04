@@ -30,3 +30,6 @@ slurm*.sh
 .pycache_local/
 CLAUDE.md
 artifacts/
+SEGRANK_OFFLINE_SKILL_README.md
+SEGRANK_RANKING_README.md
+Technical_SEGRANK_OFFLINE_SKILL_README_copy.md

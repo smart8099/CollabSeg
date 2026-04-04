@@ -3,5 +3,6 @@ model:
   params:
     in_channels: 3
     num_classes: 1
-    features: [32, 64, 128, 256]
+    encoder_name: resnet18
+    encoder_pretrained: true
     dropout: 0.1
