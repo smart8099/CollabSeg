@@ -1,0 +1,12 @@
+model:
+  name: unetv2
+  params:
+    in_channels: 3
+    num_classes: 1
+    encoder_name: custom
+    features:
+      - 64
+      - 128
+      - 256
+      - 512
+    dropout: 0.1
