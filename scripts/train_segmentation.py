@@ -128,6 +128,8 @@ def main() -> None:
     smoke_run_batches = int(train_cfg.get("smoke_run_batches", 0))
 
     best_val_dice = float("-inf")
+    early_stop_patience = int(train_cfg.get("early_stop_patience", 0))
+    epochs_without_improvement = 0
     history: list[dict[str, float | int]] = []
 
     for epoch in range(1, int(train_cfg["epochs"]) + 1):
@@ -164,7 +166,14 @@ def main() -> None:
 
         if epoch_record["val_dice"] > best_val_dice:
             best_val_dice = float(epoch_record["val_dice"])
+            epochs_without_improvement = 0
             torch.save({"model_state": model.state_dict(), "config": config}, output_dir / "best_model.pt")
+        else:
+            epochs_without_improvement += 1
+
+        if early_stop_patience > 0 and epochs_without_improvement >= early_stop_patience:
+            print(json.dumps({"early_stop": True, "epoch": epoch, "best_val_dice": best_val_dice, "patience": early_stop_patience}))
+            break
 
     test_metrics = evaluate(
         model=model,

@@ -7,6 +7,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from .blocks import ASPP, ResidualConvBlock, SeparableConv2d
+from .unetv2 import ResNetEncoder
 
 
 class SimpleEncoder(nn.Module):
@@ -45,13 +46,32 @@ class DeepLabV3Plus(nn.Module):
         encoder_widths: tuple[int, ...] = (64, 128, 256, 512),
         aspp_channels: int = 256,
         decoder_channels: int = 128,
+        encoder_name: str = "custom",
+        encoder_pretrained: bool = False,
     ) -> None:
         """Initialize the encoder, ASPP module, decoder, and prediction head."""
         super().__init__()
-        self.encoder = SimpleEncoder(in_channels=in_channels, widths=encoder_widths)
-        self.aspp = ASPP(encoder_widths[-1], aspp_channels)
+        self.encoder_name = encoder_name.lower()
+
+        if self.encoder_name == "custom":
+            self.encoder = SimpleEncoder(in_channels=in_channels, widths=encoder_widths)
+            low_level_channels = encoder_widths[0]
+            high_level_channels = encoder_widths[-1]
+        elif self.encoder_name in {"resnet18", "resnet34"}:
+            self.encoder = ResNetEncoder(
+                in_channels=in_channels,
+                backbone=self.encoder_name,
+                pretrained=encoder_pretrained,
+            )
+            # layer1 output → low-level features, layer4 output → high-level features
+            low_level_channels = self.encoder.widths[1]
+            high_level_channels = self.encoder.widths[4]
+        else:
+            raise ValueError(f"Unsupported encoder_name: {encoder_name}")
+
+        self.aspp = ASPP(high_level_channels, aspp_channels)
         self.low_level_proj = nn.Sequential(
-            nn.Conv2d(encoder_widths[0], 48, kernel_size=1, bias=False),
+            nn.Conv2d(low_level_channels, 48, kernel_size=1, bias=False),
             nn.BatchNorm2d(48),
             nn.ReLU(inplace=True),
         )
@@ -64,7 +84,12 @@ class DeepLabV3Plus(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Run a forward pass and upsample logits to the input size."""
         spatial_size = x.shape[-2:]
-        low_level, encoder_out = self.encoder(x)
+
+        if self.encoder_name == "custom":
+            low_level, encoder_out = self.encoder(x)
+        else:
+            _, low_level, _, _, encoder_out = self.encoder(x)
+
         x = self.aspp(encoder_out)
         x = F.interpolate(x, size=low_level.shape[-2:], mode="bilinear", align_corners=False)
         low_level = self.low_level_proj(low_level)

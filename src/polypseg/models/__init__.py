@@ -40,7 +40,7 @@ def _log_model_info(name: str, kwargs: dict[str, Any], model: Any) -> None:
     encoder_pretrained = kwargs.get("encoder_pretrained", False)
     features = kwargs.get("features")
 
-    if name.lower() in {"unetv2"}:
+    if name.lower() in {"unetv2", "deeplabv3plus", "deeplabv3+"}:
         lines.append(f"  encoder      : {encoder_name}")
         if encoder_name and encoder_name != "custom":
             lines.append(f"  pretrained   : {encoder_pretrained}")
