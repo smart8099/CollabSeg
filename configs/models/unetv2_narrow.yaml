@@ -3,6 +3,7 @@ model:
   params:
     in_channels: 3
     num_classes: 1
-    encoder_name: resnet18
-    encoder_pretrained: true
-    dropout: 0.1
+    channel: 16
+    deep_supervision: true
+    pretrained_path: external/unetv2_pretrained/PolypPVT.pth
+    checkpoint_path: ""

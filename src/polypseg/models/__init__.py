@@ -38,12 +38,24 @@ def _log_model_info(name: str, kwargs: dict[str, Any], model: Any) -> None:
 
     encoder_name = kwargs.get("encoder_name", "custom")
     encoder_pretrained = kwargs.get("encoder_pretrained", False)
+    pretrained_path = kwargs.get("pretrained_path", "")
+    checkpoint_path = kwargs.get("checkpoint_path", "")
+    channel = kwargs.get("channel")
     features = kwargs.get("features")
 
     if name.lower() in {"unetv2", "deeplabv3plus", "deeplabv3+"}:
-        lines.append(f"  encoder      : {encoder_name}")
-        if encoder_name and encoder_name != "custom":
-            lines.append(f"  pretrained   : {encoder_pretrained}")
+        if name.lower() == "unetv2":
+            lines.append("  encoder      : pvt_v2_b2")
+            lines.append(f"  channel      : {channel or 32}")
+            lines.append(f"  deep sup     : {kwargs.get('deep_supervision', True)}")
+            if pretrained_path:
+                lines.append(f"  backbone ckpt: {pretrained_path}")
+            if checkpoint_path:
+                lines.append(f"  model ckpt   : {checkpoint_path}")
+        else:
+            lines.append(f"  encoder      : {encoder_name}")
+            if encoder_name and encoder_name != "custom":
+                lines.append(f"  pretrained   : {encoder_pretrained}")
         if features:
             lines.append(f"  features     : {list(features)}")
 

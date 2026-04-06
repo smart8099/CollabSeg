@@ -9,12 +9,30 @@ import torch
 from .metrics import binary_segmentation_metrics
 
 
+def _forward_outputs(model: torch.nn.Module, images: torch.Tensor) -> torch.Tensor | list[torch.Tensor]:
+    """Run the model and preserve deep-supervision outputs when available."""
+    return model(images)
+
+
 def _forward_logits(model: torch.nn.Module, images: torch.Tensor) -> torch.Tensor:
-    """Normalize model outputs to a single logits tensor."""
-    outputs = model(images)
+    """Normalize model outputs to a single logits tensor for evaluation metrics."""
+    outputs = _forward_outputs(model, images)
     if isinstance(outputs, list):
         return outputs[-1]
     return outputs
+
+
+def _loss_from_outputs(outputs: torch.Tensor | list[torch.Tensor], masks: torch.Tensor, criterion) -> torch.Tensor:
+    """Average deep-supervision losses across all prediction heads."""
+    if isinstance(outputs, list):
+        losses = []
+        for logits in outputs:
+            target = masks
+            if target.shape[-2:] != logits.shape[-2:]:
+                target = torch.nn.functional.interpolate(target, size=logits.shape[-2:], mode="nearest")
+            losses.append(criterion(logits, target))
+        return torch.stack(losses).mean()
+    return criterion(outputs, masks)
 
 
 def train_one_epoch(
@@ -39,8 +57,8 @@ def train_one_epoch(
         optimizer.zero_grad(set_to_none=True)
 
         with torch.cuda.amp.autocast(enabled=use_amp):
-            logits = _forward_logits(model, images)
-            loss = criterion(logits, masks)
+            outputs = _forward_outputs(model, images)
+            loss = _loss_from_outputs(outputs, masks, criterion)
 
         if scaler is not None:
             scaler.scale(loss).backward()

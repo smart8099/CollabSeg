@@ -3,10 +3,7 @@ model:
   params:
     in_channels: 3
     num_classes: 1
-    encoder_name: custom
-    features:
-      - 64
-      - 128
-      - 256
-      - 512
-    dropout: 0.1
+    channel: 32
+    deep_supervision: true
+    pretrained_path: external/unetv2_pretrained/PolypPVT.pth
+    checkpoint_path: ""

@@ -100,6 +100,7 @@ def main() -> None:
 
     from polypseg.data import build_eval_transforms
     from polypseg.models import build_model
+    from polypseg.models.checkpointing import load_checkpoint_into_model
     from polypseg.training import BCEDiceLoss, evaluate, load_config
 
     config = load_config(args.config, args.model_config)
@@ -117,8 +118,7 @@ def main() -> None:
     )
 
     model = build_model(config["model"]["name"], **config["model"]["params"]).to(device)
-    checkpoint = torch.load(args.checkpoint, map_location=device)
-    model.load_state_dict(checkpoint["model_state"])
+    load_checkpoint_into_model(model, args.checkpoint, device=device)
     criterion = BCEDiceLoss(
         bce_weight=float(loss_cfg["bce_weight"]),
         dice_weight=float(loss_cfg["dice_weight"]),

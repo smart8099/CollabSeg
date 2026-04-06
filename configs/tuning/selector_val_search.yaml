@@ -1,0 +1,51 @@
+mode: ensemble
+ensemble_config: configs/ensemble/default.yaml
+split_csv: datasets/agentpolyp_2504/unified_split/manifests/val.csv
+root_dir: datasets/agentpolyp_2504/unified_split
+device: cuda
+batch_size: 8
+metric: selector_dice
+maximize: true
+output_dir: outputs/selector_tuning_val
+
+normalize_groups:
+  - [
+      scoring.weights.confidence,
+      scoring.weights.agreement,
+      scoring.weights.shape,
+      scoring.weights.boundary,
+      scoring.weights.prompt,
+    ]
+
+search:
+  include_baseline: true
+  num_trials: 16
+  random_seed: 42
+  parameters:
+    confidence_weight:
+      path: scoring.weights.confidence
+      values: [0.25, 0.35, 0.45]
+    agreement_weight:
+      path: scoring.weights.agreement
+      values: [0.15, 0.25, 0.35]
+    shape_weight:
+      path: scoring.weights.shape
+      values: [0.10, 0.20, 0.30]
+    boundary_weight:
+      path: scoring.weights.boundary
+      values: [0.10, 0.15, 0.20]
+    prompt_weight:
+      path: scoring.weights.prompt
+      values: [0.00, 0.05, 0.10]
+    consensus_iou_threshold:
+      path: scoring.policy.consensus_iou_threshold
+      values: [0.65, 0.75, 0.85]
+    top_score_margin:
+      path: scoring.policy.top_score_margin
+      values: [0.03, 0.05, 0.08]
+    fuse_iou_threshold:
+      path: scoring.policy.fuse_iou_threshold
+      values: [0.45, 0.55, 0.65]
+    fuse_top_k:
+      path: scoring.policy.fuse_top_k
+      values: [2, 3]

@@ -10,6 +10,7 @@ from .embeddings import cosine_similarity, embedding_distance
 def score_model_compatibility(
     artifacts_summary: dict[str, Any],
     target_descriptor_embedding: list[float],
+    distance_penalty: float = 0.05,
 ) -> dict[str, float]:
     """Score target compatibility for each model from descriptor-centroid similarity."""
     scores: dict[str, float] = {}
@@ -20,7 +21,7 @@ def score_model_compatibility(
             continue
         similarity = cosine_similarity(target_descriptor_embedding, centroid)
         distance = embedding_distance(target_descriptor_embedding, centroid)
-        scores[model_name] = float(similarity - 0.05 * distance)
+        scores[model_name] = float(similarity - distance_penalty * distance)
     return scores
 
 

@@ -24,6 +24,7 @@ from polypseg.ensemble.policy import select_prediction
 from polypseg.ensemble.scoring import score_prediction
 from polypseg.ensemble.types import PredictionRecord
 from polypseg.models import build_model
+from polypseg.models.checkpointing import load_checkpoint_into_model
 
 
 def _aggregate(records: list[dict[str, float]]) -> dict[str, float]:
@@ -72,8 +73,7 @@ def _preprocess_batch(images: list[Image.Image], image_size: int, mean: list[flo
 def _predict_for_model(spec, rows: list[dict[str, str]], root_dir: Path, device: torch.device, batch_size: int, threshold: float):
     """Run one model over the full split in batches and return prediction records by sample id."""
     model = build_model(spec.architecture, **spec.model_params).to(device)
-    checkpoint = torch.load(spec.checkpoint, map_location=device)
-    model.load_state_dict(checkpoint["model_state"])
+    load_checkpoint_into_model(model, spec.checkpoint, device=device)
     model.eval()
 
     results: dict[str, PredictionRecord] = {}

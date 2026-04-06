@@ -9,6 +9,7 @@ import torch
 from PIL import Image
 
 from polypseg.models import build_model
+from polypseg.models.checkpointing import load_checkpoint_into_model
 
 from .types import ModelSpec, PredictionRecord
 
@@ -29,8 +30,7 @@ class SegmentationPredictor:
         self.spec = spec
         self.device = device
         self.model = build_model(spec.architecture, **spec.model_params).to(device)
-        checkpoint = torch.load(spec.checkpoint, map_location=device)
-        self.model.load_state_dict(checkpoint["model_state"])
+        load_checkpoint_into_model(self.model, spec.checkpoint, device=device)
         self.model.eval()
 
     @torch.no_grad()

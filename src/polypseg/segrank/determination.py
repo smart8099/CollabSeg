@@ -29,11 +29,32 @@ def compute_prior_scores(
 
 def compute_arbitration_alpha(proposal_margin: float, retrieved_datasets: list[RetrievedDataset]) -> float:
     """Compute a heuristic proposal-versus-prior blend weight."""
-    proposal_term = max(0.0, min(proposal_margin / 0.15, 1.0))
+    return compute_arbitration_alpha_with_params(
+        proposal_margin=proposal_margin,
+        retrieved_datasets=retrieved_datasets,
+        params=None,
+    )
+
+
+def compute_arbitration_alpha_with_params(
+    proposal_margin: float,
+    retrieved_datasets: list[RetrievedDataset],
+    params: dict[str, float] | None,
+) -> float:
+    """Compute a heuristic proposal-versus-prior blend weight with tunable constants."""
+    params = params or {}
+    proposal_margin_scale = max(float(params.get("proposal_margin_scale", 0.15)), 1e-6)
+    proposal_term = max(0.0, min(proposal_margin / proposal_margin_scale, 1.0))
     shift = 1.0 - max((retrieved_datasets[0].combined_similarity if retrieved_datasets else 0.0), 0.0)
     shift_term = max(0.0, min(shift, 1.0))
-    alpha = 0.35 + 0.4 * proposal_term + 0.25 * shift_term
-    return max(0.1, min(alpha, 0.9))
+    alpha = (
+        float(params.get("base", 0.35))
+        + float(params.get("proposal_weight", 0.4)) * proposal_term
+        + float(params.get("shift_weight", 0.25)) * shift_term
+    )
+    min_alpha = float(params.get("min_alpha", 0.1))
+    max_alpha = float(params.get("max_alpha", 0.9))
+    return max(min_alpha, min(alpha, max_alpha))
 
 
 def determine_final_ranking(

@@ -5,8 +5,15 @@ from __future__ import annotations
 from typing import Any
 
 
-def score_proposal_from_evidence(evidence_summary: dict[str, float]) -> float:
+def score_proposal_from_evidence(
+    evidence_summary: dict[str, float],
+    weights: dict[str, float] | None = None,
+    modifiers: dict[str, float] | None = None,
+) -> float:
     """Compute a proposal score using target evidence only."""
+    weights = weights or {}
+    modifiers = modifiers or {}
+
     agreement = float(evidence_summary["agreement_iou"])
     fg_conf = float(evidence_summary["foreground_confidence"])
     bg_conf = float(evidence_summary["background_confidence"])
@@ -15,18 +22,21 @@ def score_proposal_from_evidence(evidence_summary: dict[str, float]) -> float:
     components = float(evidence_summary["component_count"])
     confidence_margin = float(evidence_summary["confidence_margin"])
 
-    component_penalty = 1.0 / (1.0 + max(components - 1.0, 0.0))
-    entropy_bonus = 1.0 - min(entropy, 1.0)
-    boundary_bonus = min(boundary / 4.0, 1.0)
+    component_offset = float(modifiers.get("component_offset", 1.0))
+    component_penalty = 1.0 / (1.0 + max(components - component_offset, 0.0))
+    entropy_cap = float(modifiers.get("entropy_cap", 1.0))
+    entropy_bonus = 1.0 - min(entropy, entropy_cap)
+    boundary_scale = max(float(modifiers.get("boundary_scale", 4.0)), 1e-6)
+    boundary_bonus = min(boundary / boundary_scale, 1.0)
 
     return (
-        0.25 * agreement
-        + 0.20 * fg_conf
-        + 0.15 * bg_conf
-        + 0.15 * confidence_margin
-        + 0.15 * entropy_bonus
-        + 0.05 * component_penalty
-        + 0.05 * boundary_bonus
+        float(weights.get("agreement", 0.25)) * agreement
+        + float(weights.get("foreground_confidence", 0.20)) * fg_conf
+        + float(weights.get("background_confidence", 0.15)) * bg_conf
+        + float(weights.get("confidence_margin", 0.15)) * confidence_margin
+        + float(weights.get("entropy_bonus", 0.15)) * entropy_bonus
+        + float(weights.get("component_penalty", 0.05)) * component_penalty
+        + float(weights.get("boundary_bonus", 0.05)) * boundary_bonus
     )
 
 
