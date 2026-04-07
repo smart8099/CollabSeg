@@ -9,6 +9,11 @@ import torch.nn.functional as F
 from .blocks import ASPP, ResidualConvBlock, SeparableConv2d
 from .unetv2 import ResNetEncoder
 
+try:
+    import timm
+except ModuleNotFoundError:
+    timm = None
+
 
 class SimpleEncoder(nn.Module):
     """Simple residual encoder used by the local DeepLabV3+ implementation."""
@@ -34,6 +39,27 @@ class SimpleEncoder(nn.Module):
         x = self.layer3(x)
         x = self.layer4(x)
         return low_level, x
+
+
+class XceptionEncoder(nn.Module):
+    """timm-backed Xception feature extractor for DeepLabV3+."""
+
+    def __init__(self, backbone: str = "xception65", pretrained: bool = False) -> None:
+        super().__init__()
+        if timm is None:
+            raise ModuleNotFoundError("Xception encoder requires timm to be installed.")
+        self.backbone_name = backbone
+        self.backbone = timm.create_model(
+            backbone,
+            pretrained=pretrained,
+            features_only=True,
+            out_indices=(1, 4),
+        )
+        self.widths = tuple(self.backbone.feature_info.channels())
+
+    def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        low_level, high_level = self.backbone(x)
+        return low_level, high_level
 
 
 class DeepLabV3Plus(nn.Module):
@@ -66,6 +92,12 @@ class DeepLabV3Plus(nn.Module):
             # layer1 output → low-level features, layer4 output → high-level features
             low_level_channels = self.encoder.widths[1]
             high_level_channels = self.encoder.widths[4]
+        elif self.encoder_name in {"xception", "xception65", "legacy_xception"}:
+            if in_channels != 3:
+                raise ValueError("Xception encoder currently requires in_channels=3.")
+            backbone_name = "xception65" if self.encoder_name == "xception" else self.encoder_name
+            self.encoder = XceptionEncoder(backbone=backbone_name, pretrained=encoder_pretrained)
+            low_level_channels, high_level_channels = self.encoder.widths
         else:
             raise ValueError(f"Unsupported encoder_name: {encoder_name}")
 
@@ -86,6 +118,8 @@ class DeepLabV3Plus(nn.Module):
         spatial_size = x.shape[-2:]
 
         if self.encoder_name == "custom":
+            low_level, encoder_out = self.encoder(x)
+        elif self.encoder_name in {"xception", "xception65", "legacy_xception"}:
             low_level, encoder_out = self.encoder(x)
         else:
             _, low_level, _, _, encoder_out = self.encoder(x)

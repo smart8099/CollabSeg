@@ -12,7 +12,7 @@ model:
   params:
     in_channels: 3
     num_classes: 1
-    encoder_name: resnet34
+    encoder_name: xception65
     encoder_pretrained: true
     aspp_channels: 256
     decoder_channels: 128
