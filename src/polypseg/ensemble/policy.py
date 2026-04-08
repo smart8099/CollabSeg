@@ -57,7 +57,10 @@ def _ranking_payload(
     ]
 
 
-def _select_prediction_legacy(predictions: list[PredictionRecord], config: dict) -> EnsembleDecision:
+def _select_prediction_legacy(
+    predictions: list[PredictionRecord],
+    config: dict,
+) -> EnsembleDecision:
     """Choose the final ensemble output using the original consensus and margin rules."""
     ranked = sorted(predictions, key=lambda record: record.score, reverse=True)
     policy_cfg = config["scoring"]["policy"]
@@ -103,7 +106,11 @@ def _select_prediction_legacy(predictions: list[PredictionRecord], config: dict)
     )
 
 
-def _select_prediction_anchor_override(predictions: list[PredictionRecord], config: dict) -> EnsembleDecision:
+def _select_prediction_anchor_override(
+    predictions: list[PredictionRecord],
+    config: dict,
+    prior_context: dict | None = None,
+) -> EnsembleDecision:
     """Select conservatively by anchoring on one strong model and only overriding with strong evidence."""
     ranked = sorted(predictions, key=lambda record: record.score, reverse=True)
     policy_cfg = config["scoring"]["policy"]
@@ -121,13 +128,28 @@ def _select_prediction_anchor_override(predictions: list[PredictionRecord], conf
         "trust_weights",
         {"confidence": 0.35, "agreement": 0.20, "shape": 0.30, "boundary": 0.15},
     )
+    source_prior_cfg = anchor_cfg.get("source_priors", {})
+    prior_context = prior_context or {}
+    prior_scores = prior_context.get("prior_scores", {})
+    compatibility_scores = prior_context.get("compatibility_scores", {})
     anchor_trust = _trust_score(anchor, trust_weights)
+    anchor_prior_score = float(prior_scores.get(anchor.model_name, 0.0))
+    anchor_similarity = float(compatibility_scores.get(anchor.model_name, 0.0))
     extra_fields_by_model = {
-        prediction.model_name: {"trust_score": _trust_score(prediction, trust_weights)}
+        prediction.model_name: {
+            "trust_score": _trust_score(prediction, trust_weights),
+            "prior_score": float(prior_scores.get(prediction.model_name, 0.0)),
+            "target_similarity": float(compatibility_scores.get(prediction.model_name, 0.0)),
+            "prior_margin_vs_anchor": float(prior_scores.get(prediction.model_name, 0.0) - anchor_prior_score),
+            "similarity_margin_vs_anchor": float(compatibility_scores.get(prediction.model_name, 0.0) - anchor_similarity),
+        }
         for prediction in ranked
     }
 
     anchor_trust_threshold = float(anchor_cfg.get("trust_threshold", 0.72))
+    anchor_similarity_threshold = float(source_prior_cfg.get("anchor_similarity_threshold", -1.0))
+    if anchor_similarity_threshold >= 0.0 and anchor_similarity >= anchor_similarity_threshold:
+        anchor_trust_threshold -= float(source_prior_cfg.get("anchor_similarity_bonus", 0.02))
     if anchor_trust >= anchor_trust_threshold:
         return EnsembleDecision(
             decision_mode="anchor_keep",
@@ -151,15 +173,24 @@ def _select_prediction_anchor_override(predictions: list[PredictionRecord], conf
 
     best_alt = alternatives[0]
     best_alt_trust = extra_fields_by_model[best_alt.model_name]["trust_score"]
+    best_alt_prior = extra_fields_by_model[best_alt.model_name]["prior_score"]
+    best_alt_similarity = extra_fields_by_model[best_alt.model_name]["target_similarity"]
     score_gain = float(best_alt.score - anchor.score)
     trust_gain = float(best_alt_trust - anchor_trust)
     anchor_overlap = _mask_iou(anchor.mask, best_alt.mask)
     disagreement = 1.0 - anchor_overlap
+    prior_margin = float(best_alt_prior - anchor_prior_score)
+    similarity_margin = float(best_alt_similarity - anchor_similarity)
 
     override_score_margin = float(anchor_cfg.get("override_score_margin", 0.08))
     override_trust_margin = float(anchor_cfg.get("override_trust_margin", 0.02))
     override_min_disagreement = float(anchor_cfg.get("override_min_disagreement", 0.10))
     override_min_alt_trust = float(anchor_cfg.get("override_min_alt_trust", 0.68))
+    override_min_prior_margin = float(source_prior_cfg.get("override_min_prior_margin", -1.0))
+    override_min_alt_similarity = float(source_prior_cfg.get("override_min_alt_similarity", -1.0))
+    negative_prior_penalty = float(source_prior_cfg.get("negative_prior_penalty", 0.10))
+    positive_prior_bonus = float(source_prior_cfg.get("positive_prior_bonus", 0.03))
+    similarity_penalty = float(source_prior_cfg.get("similarity_penalty", 0.03))
 
     allow_fusion = bool(anchor_cfg.get("allow_fusion", False))
     fusion_score_margin = float(anchor_cfg.get("fusion_score_margin", 0.03))
@@ -167,11 +198,23 @@ def _select_prediction_anchor_override(predictions: list[PredictionRecord], conf
     fusion_min_alt_trust = float(anchor_cfg.get("fusion_min_alt_trust", 0.72))
     fusion_iou_threshold = float(anchor_cfg.get("fusion_iou_threshold", 0.80))
 
+    effective_override_score_margin = override_score_margin
+    effective_override_trust_margin = override_trust_margin
+    if prior_margin < 0.0:
+        effective_override_score_margin += negative_prior_penalty * abs(prior_margin)
+        effective_override_trust_margin += 0.5 * negative_prior_penalty * abs(prior_margin)
+    else:
+        effective_override_score_margin = max(0.0, effective_override_score_margin - positive_prior_bonus * prior_margin)
+    if similarity_margin < 0.0:
+        effective_override_score_margin += similarity_penalty * abs(similarity_margin)
+
     if (
-        score_gain >= override_score_margin
-        and trust_gain >= override_trust_margin
+        score_gain >= effective_override_score_margin
+        and trust_gain >= effective_override_trust_margin
         and disagreement >= override_min_disagreement
         and best_alt_trust >= override_min_alt_trust
+        and (override_min_prior_margin < 0.0 or prior_margin >= override_min_prior_margin)
+        and (override_min_alt_similarity < 0.0 or best_alt_similarity >= override_min_alt_similarity)
     ):
         if (
             allow_fusion
@@ -189,7 +232,8 @@ def _select_prediction_anchor_override(predictions: list[PredictionRecord], conf
                 ranking=_ranking_payload(ranked, extra_fields_by_model=extra_fields_by_model),
                 reason=(
                     f"Overrode anchor {anchor.model_name} with conservative fusion because alternative {best_alt.model_name} "
-                    f"was stronger (score_gain={score_gain:.3f}, trust_gain={trust_gain:.3f}) while remaining highly consistent."
+                    f"was stronger (score_gain={score_gain:.3f}, trust_gain={trust_gain:.3f}, prior_margin={prior_margin:.3f}) "
+                    f"while remaining highly consistent."
                 ),
             )
 
@@ -201,7 +245,8 @@ def _select_prediction_anchor_override(predictions: list[PredictionRecord], conf
             ranking=_ranking_payload(ranked, extra_fields_by_model=extra_fields_by_model),
             reason=(
                 f"Overrode anchor {anchor.model_name} with {best_alt.model_name} because it showed a strong relative advantage "
-                f"(score_gain={score_gain:.3f}, trust_gain={trust_gain:.3f}, disagreement={disagreement:.3f})."
+                f"(score_gain={score_gain:.3f}, trust_gain={trust_gain:.3f}, disagreement={disagreement:.3f}, "
+                f"prior_margin={prior_margin:.3f}, similarity_margin={similarity_margin:.3f})."
             ),
         )
 
@@ -213,17 +258,23 @@ def _select_prediction_anchor_override(predictions: list[PredictionRecord], conf
         ranking=_ranking_payload(ranked, extra_fields_by_model=extra_fields_by_model),
         reason=(
             f"Kept anchor {anchor.model_name}; best alternative {best_alt.model_name} did not clear the override criteria "
-            f"(score_gain={score_gain:.3f}, trust_gain={trust_gain:.3f}, disagreement={disagreement:.3f})."
+            f"(score_gain={score_gain:.3f}, trust_gain={trust_gain:.3f}, disagreement={disagreement:.3f}, "
+            f"prior_margin={prior_margin:.3f}, similarity_margin={similarity_margin:.3f}, "
+            f"effective_score_margin={effective_override_score_margin:.3f})."
         ),
     )
 
 
-def select_prediction(predictions: list[PredictionRecord], config: dict) -> EnsembleDecision:
+def select_prediction(
+    predictions: list[PredictionRecord],
+    config: dict,
+    prior_context: dict | None = None,
+) -> EnsembleDecision:
     """Choose the final ensemble output using the configured selection policy."""
     if not predictions:
         raise ValueError("No predictions provided.")
     policy_cfg = config["scoring"]["policy"]
     selector_mode = str(policy_cfg.get("selector_mode", "legacy")).lower()
     if selector_mode == "anchor_override":
-        return _select_prediction_anchor_override(predictions, config)
+        return _select_prediction_anchor_override(predictions, config, prior_context=prior_context)
     return _select_prediction_legacy(predictions, config)

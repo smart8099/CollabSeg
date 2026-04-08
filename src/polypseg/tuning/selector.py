@@ -288,12 +288,14 @@ def _evaluate_ensemble_trial(
     model_names: list[str],
     trial_config: dict[str, Any],
     prompt: str,
+    artifacts_summary: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Evaluate one ensemble selector configuration against cached validation data."""
     threshold = float(trial_config["scoring"]["threshold"])
     per_sample_records: list[dict[str, float | str]] = []
     per_source: dict[str, list[dict[str, float]]] = {}
     per_model_records: dict[str, list[dict[str, float]]] = {name: [] for name in model_names}
+    anchor_cfg = trial_config.get("scoring", {}).get("policy", {}).get("anchor", {})
 
     for sample in cache:
         predictions = _build_prediction_records(sample, model_names=model_names, threshold=threshold)
@@ -307,7 +309,34 @@ def _evaluate_ensemble_trial(
             )
             for prediction in predictions
         ]
-        decision = select_prediction(predictions, trial_config)
+        prior_context = {}
+        if artifacts_summary is not None and anchor_cfg.get("source_priors", {}).get("enabled", False):
+            descriptor = compute_image_descriptor(sample.image_np)
+            compatibility_scores = score_model_compatibility(
+                artifacts_summary=artifacts_summary,
+                target_descriptor_embedding=descriptor["embedding"],
+                distance_penalty=float(anchor_cfg.get("source_priors", {}).get("distance_penalty", 0.05)),
+            )
+            anchor_name = str(anchor_cfg.get("model_name", "")).strip()
+            anchor_prediction = next((prediction for prediction in predictions if prediction.model_name == anchor_name), None)
+            if anchor_prediction is not None:
+                anchor_morphology = compute_mask_morphology(anchor_prediction.mask)
+                retrieved = retrieve_similar_datasets(
+                    artifacts_summary=artifacts_summary,
+                    target_descriptor_embedding=descriptor["embedding"],
+                    target_morphology_embedding=anchor_morphology["embedding"],
+                    top_k=int(anchor_cfg.get("source_priors", {}).get("top_k_retrieval", 3)),
+                )
+                prior_context = {
+                    "prior_scores": compute_prior_scores(
+                        artifacts_summary=artifacts_summary,
+                        retrieved_datasets=retrieved,
+                    ),
+                    "compatibility_scores": compatibility_scores,
+                    "retrieved_datasets": [item.to_dict() for item in retrieved],
+                }
+
+        decision = select_prediction(predictions, trial_config, prior_context=prior_context)
 
         per_model_metrics = {prediction.model_name: dice_iou(prediction.mask, sample.target_mask) for prediction in predictions}
         for model_name, metrics in per_model_metrics.items():
@@ -507,6 +536,7 @@ def _evaluate_trial(
             model_names=model_names,
             trial_config=trial_config,
             prompt=prompt,
+            artifacts_summary=artifacts_summary,
         )
     if mode == "segrank":
         if artifacts_summary is None:
@@ -548,8 +578,16 @@ def run_selector_tuning(tuning_config: dict[str, Any], project_root: str | Path)
     )
 
     artifacts_summary = None
+    anchor_source_priors = (
+        base_ensemble_config.get("scoring", {})
+        .get("policy", {})
+        .get("anchor", {})
+        .get("source_priors", {})
+    )
     if mode == "segrank":
         artifacts_summary = load_source_artifacts(root / tuning_config.get("artifacts_dir", "artifacts/source_artifacts"))
+    elif anchor_source_priors.get("enabled", False):
+        artifacts_summary = load_source_artifacts(root / anchor_source_priors.get("artifacts_dir", "artifacts/source_artifacts"))
 
     trials: list[dict[str, Any]] = []
     sampled_parameter_sets: list[dict[str, Any]] = []

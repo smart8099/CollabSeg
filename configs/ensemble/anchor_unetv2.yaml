@@ -29,6 +29,18 @@ scoring:
     fuse_top_k: 2
     anchor:
       model_name: unetv2
+      source_priors:
+        enabled: true
+        artifacts_dir: artifacts/source_artifacts
+        top_k_retrieval: 3
+        distance_penalty: 0.05
+        override_min_prior_margin: -0.02
+        override_min_alt_similarity: -0.10
+        anchor_similarity_threshold: 0.60
+        anchor_similarity_bonus: 0.02
+        negative_prior_penalty: 0.10
+        positive_prior_bonus: 0.03
+        similarity_penalty: 0.03
       trust_weights:
         confidence: 0.35
         agreement: 0.15
