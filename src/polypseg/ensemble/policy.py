@@ -209,10 +209,17 @@ def _select_prediction_anchor_override(
         and best_alt_trust >= challenger_min_trust
         and trust_gain >= challenger_trust_margin
     )
-    strong_anchor_keep = (
-        anchor_trust >= anchor_trust_threshold
-        and not challenger_present
+    challenge_score_gain = float(anchor_cfg.get("challenge_score_gain", 0.0))
+    challenge_trust_floor = float(anchor_cfg.get("challenge_trust_floor", 0.75))
+    challenge_max_negative_prior_margin = float(source_prior_cfg.get("challenge_max_negative_prior_margin", -0.10))
+    challenge_max_negative_similarity_margin = float(source_prior_cfg.get("challenge_max_negative_similarity_margin", -0.03))
+    challenger_review = (
+        best_alt.score >= anchor.score + challenge_score_gain
+        and best_alt_trust >= challenge_trust_floor
+        and prior_margin >= challenge_max_negative_prior_margin
+        and similarity_margin >= challenge_max_negative_similarity_margin
     )
+    strong_anchor_keep = anchor_trust >= anchor_trust_threshold and not challenger_present and not challenger_review
     if strong_anchor_keep:
         return EnsembleDecision(
             decision_mode="anchor_keep",
@@ -275,11 +282,18 @@ def _select_prediction_anchor_override(
             ),
         )
 
-    if anchor_trust >= anchor_trust_threshold:
+    if anchor_trust >= anchor_trust_threshold and not challenger_review:
         keep_reason = (
             f"Kept anchor {anchor.model_name}; anchor trust remained high at {anchor_trust:.3f} after challenger review "
             f"(best_alt={best_alt.model_name}, score_gain={score_gain:.3f}, trust_gain={trust_gain:.3f}, "
             f"prior_margin={prior_margin:.3f}, similarity_margin={similarity_margin:.3f})."
+        )
+    elif anchor_trust >= anchor_trust_threshold and challenger_review:
+        keep_reason = (
+            f"Kept anchor {anchor.model_name} after challenger review against {best_alt.model_name}; "
+            f"the challenger was considered but still did not clear the override criteria "
+            f"(score_gain={score_gain:.3f}, trust_gain={trust_gain:.3f}, prior_margin={prior_margin:.3f}, "
+            f"similarity_margin={similarity_margin:.3f}, effective_score_margin={effective_override_score_margin:.3f})."
         )
     elif hard_prior_veto:
         keep_reason = (
