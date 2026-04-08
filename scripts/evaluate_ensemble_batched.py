@@ -25,6 +25,14 @@ from polypseg.ensemble.scoring import score_prediction
 from polypseg.ensemble.types import PredictionRecord
 from polypseg.models import build_model
 from polypseg.models.checkpointing import load_checkpoint_into_model
+from polypseg.segrank import (
+    compute_image_descriptor,
+    compute_mask_morphology,
+    compute_prior_scores,
+    load_source_artifacts,
+    retrieve_similar_datasets,
+    score_model_compatibility,
+)
 
 
 def _aggregate(records: list[dict[str, float]]) -> dict[str, float]:
@@ -107,6 +115,52 @@ def _predict_for_model(spec, rows: list[dict[str, str]], root_dir: Path, device:
     return results
 
 
+def _build_prior_context(
+    ensemble_config: dict,
+    artifacts_summary: dict | None,
+    image_np: np.ndarray,
+    predictions: list[PredictionRecord],
+) -> dict:
+    """Build per-image source-prior context for prior-aware anchor selection."""
+    if artifacts_summary is None:
+        return {}
+
+    anchor_cfg = ensemble_config.get("scoring", {}).get("policy", {}).get("anchor", {})
+    source_prior_cfg = anchor_cfg.get("source_priors", {})
+    if not source_prior_cfg.get("enabled", False):
+        return {}
+
+    anchor_name = str(anchor_cfg.get("model_name", "")).strip()
+    if not anchor_name:
+        return {}
+
+    anchor_prediction = next((prediction for prediction in predictions if prediction.model_name == anchor_name), None)
+    if anchor_prediction is None:
+        return {}
+
+    descriptor = compute_image_descriptor(image_np)
+    compatibility_scores = score_model_compatibility(
+        artifacts_summary=artifacts_summary,
+        target_descriptor_embedding=descriptor["embedding"],
+        distance_penalty=float(source_prior_cfg.get("distance_penalty", 0.05)),
+    )
+    anchor_morphology = compute_mask_morphology(anchor_prediction.mask)
+    retrieved = retrieve_similar_datasets(
+        artifacts_summary=artifacts_summary,
+        target_descriptor_embedding=descriptor["embedding"],
+        target_morphology_embedding=anchor_morphology["embedding"],
+        top_k=int(source_prior_cfg.get("top_k_retrieval", 3)),
+    )
+    return {
+        "prior_scores": compute_prior_scores(
+            artifacts_summary=artifacts_summary,
+            retrieved_datasets=retrieved,
+        ),
+        "compatibility_scores": compatibility_scores,
+        "retrieved_datasets": [item.to_dict() for item in retrieved],
+    }
+
+
 def main() -> None:
     """Parse CLI arguments and evaluate the ensemble with batched inference."""
     parser = argparse.ArgumentParser(description="Evaluate the ensemble selector with batched inference.")
@@ -116,6 +170,7 @@ def main() -> None:
     parser.add_argument("--device", type=str, default="cuda")
     parser.add_argument("--prompt", type=str, default="")
     parser.add_argument("--output-json", type=str, default="")
+    parser.add_argument("--output-trace-json", type=str, default="")
     parser.add_argument("--max-samples", type=int, default=0)
     parser.add_argument("--batch-size", type=int, default=8)
     args = parser.parse_args()
@@ -125,6 +180,16 @@ def main() -> None:
     ensemble_config = load_registry_config(ensemble_config_path)
     registry = build_registry(ensemble_config_path, ROOT)
     threshold = float(ensemble_config["scoring"]["threshold"])
+    artifacts_summary = None
+    anchor_source_priors = (
+        ensemble_config.get("scoring", {})
+        .get("policy", {})
+        .get("anchor", {})
+        .get("source_priors", {})
+    )
+    if anchor_source_priors.get("enabled", False):
+        artifacts_dir = ROOT / anchor_source_priors.get("artifacts_dir", "artifacts/source_artifacts")
+        artifacts_summary = load_source_artifacts(artifacts_dir)
 
     root_dir = ROOT / args.root_dir
     split_csv = ROOT / args.split_csv
@@ -146,6 +211,7 @@ def main() -> None:
     }
 
     per_sample_records = []
+    per_sample_traces = []
     per_source = defaultdict(list)
     per_model_records = defaultdict(list)
 
@@ -168,7 +234,13 @@ def main() -> None:
             )
             for prediction in predictions
         ]
-        decision = select_prediction(predictions, ensemble_config)
+        prior_context = _build_prior_context(
+            ensemble_config=ensemble_config,
+            artifacts_summary=artifacts_summary,
+            image_np=image_np,
+            predictions=predictions,
+        )
+        decision = select_prediction(predictions, ensemble_config, prior_context=prior_context)
 
         per_model_metrics = {
             pred.model_name: dice_iou(pred.mask, target_mask)
@@ -185,7 +257,7 @@ def main() -> None:
             )
 
         selector_metrics = dice_iou(decision.final_mask, target_mask)
-        _, oracle_metrics = max(per_model_metrics.items(), key=lambda item: item[1]["dice"])
+        oracle_model, oracle_metrics = max(per_model_metrics.items(), key=lambda item: item[1]["dice"])
         selector_hit_oracle = float(selector_metrics["dice"] >= (oracle_metrics["dice"] - 1e-6))
 
         record = {
@@ -200,6 +272,20 @@ def main() -> None:
         }
         per_sample_records.append(record)
         per_source[row["source_dataset"]].append(record)
+        if args.output_trace_json:
+            per_sample_traces.append(
+                {
+                    **record,
+                    "decision_mode": decision.decision_mode,
+                    "selected_model": decision.selected_model,
+                    "reason": decision.reason,
+                    "oracle_model": oracle_model,
+                    "oracle_model_dice": oracle_metrics["dice"],
+                    "standalone_metrics": per_model_metrics,
+                    "ranking": decision.ranking,
+                    "retrieved_datasets": prior_context.get("retrieved_datasets", []),
+                }
+            )
 
     standalone_summary = {
         model_name: _aggregate(records)
@@ -219,6 +305,14 @@ def main() -> None:
         output_path = ROOT / args.output_json if not Path(args.output_json).is_absolute() else Path(args.output_json)
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
+    if args.output_trace_json:
+        trace_path = ROOT / args.output_trace_json if not Path(args.output_trace_json).is_absolute() else Path(args.output_trace_json)
+        trace_path.parent.mkdir(parents=True, exist_ok=True)
+        trace_payload = {
+            "num_samples": len(per_sample_traces),
+            "samples": per_sample_traces,
+        }
+        trace_path.write_text(json.dumps(trace_payload, indent=2) + "\n", encoding="utf-8")
 
 
 if __name__ == "__main__":
