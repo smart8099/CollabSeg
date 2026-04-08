@@ -36,6 +36,8 @@ scoring:
         distance_penalty: 0.05
         override_min_prior_margin: -0.02
         override_min_alt_similarity: -0.10
+        strong_negative_prior_veto: -0.15
+        strong_negative_similarity_veto: -0.05
         anchor_similarity_threshold: 0.60
         anchor_similarity_bonus: 0.02
         negative_prior_penalty: 0.10
@@ -47,6 +49,9 @@ scoring:
         shape: 0.30
         boundary: 0.20
       trust_threshold: 0.74
+      challenger_score_margin: 0.03
+      challenger_trust_margin: 0.02
+      challenger_min_trust: 0.78
       override_score_margin: 0.08
       override_trust_margin: 0.02
       override_min_disagreement: 0.10

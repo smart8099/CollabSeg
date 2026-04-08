@@ -146,20 +146,6 @@ def _select_prediction_anchor_override(
         for prediction in ranked
     }
 
-    anchor_trust_threshold = float(anchor_cfg.get("trust_threshold", 0.72))
-    anchor_similarity_threshold = float(source_prior_cfg.get("anchor_similarity_threshold", -1.0))
-    if anchor_similarity_threshold >= 0.0 and anchor_similarity >= anchor_similarity_threshold:
-        anchor_trust_threshold -= float(source_prior_cfg.get("anchor_similarity_bonus", 0.02))
-    if anchor_trust >= anchor_trust_threshold:
-        return EnsembleDecision(
-            decision_mode="anchor_keep",
-            selected_model=anchor.model_name,
-            final_mask=anchor.mask,
-            final_probability_map=anchor.probability_map,
-            ranking=_ranking_payload(ranked, extra_fields_by_model=extra_fields_by_model),
-            reason=f"Kept anchor model {anchor.model_name} because trust={anchor_trust:.3f} exceeded the stay threshold.",
-        )
-
     alternatives = [prediction for prediction in ranked if prediction.model_name != anchor.model_name]
     if not alternatives:
         return EnsembleDecision(
@@ -191,6 +177,16 @@ def _select_prediction_anchor_override(
     negative_prior_penalty = float(source_prior_cfg.get("negative_prior_penalty", 0.10))
     positive_prior_bonus = float(source_prior_cfg.get("positive_prior_bonus", 0.03))
     similarity_penalty = float(source_prior_cfg.get("similarity_penalty", 0.03))
+    strong_negative_prior_veto = float(source_prior_cfg.get("strong_negative_prior_veto", -0.15))
+    strong_negative_similarity_veto = float(source_prior_cfg.get("strong_negative_similarity_veto", -0.05))
+    challenger_score_margin = float(anchor_cfg.get("challenger_score_margin", 0.03))
+    challenger_trust_margin = float(anchor_cfg.get("challenger_trust_margin", 0.02))
+    challenger_min_trust = float(anchor_cfg.get("challenger_min_trust", 0.78))
+
+    anchor_trust_threshold = float(anchor_cfg.get("trust_threshold", 0.72))
+    anchor_similarity_threshold = float(source_prior_cfg.get("anchor_similarity_threshold", -1.0))
+    if anchor_similarity_threshold >= 0.0 and anchor_similarity >= anchor_similarity_threshold:
+        anchor_trust_threshold -= float(source_prior_cfg.get("anchor_similarity_bonus", 0.02))
 
     allow_fusion = bool(anchor_cfg.get("allow_fusion", False))
     fusion_score_margin = float(anchor_cfg.get("fusion_score_margin", 0.03))
@@ -208,7 +204,36 @@ def _select_prediction_anchor_override(
     if similarity_margin < 0.0:
         effective_override_score_margin += similarity_penalty * abs(similarity_margin)
 
+    challenger_present = (
+        score_gain >= challenger_score_margin
+        and best_alt_trust >= challenger_min_trust
+        and trust_gain >= challenger_trust_margin
+    )
+    strong_anchor_keep = (
+        anchor_trust >= anchor_trust_threshold
+        and not challenger_present
+    )
+    if strong_anchor_keep:
+        return EnsembleDecision(
+            decision_mode="anchor_keep",
+            selected_model=anchor.model_name,
+            final_mask=anchor.mask,
+            final_probability_map=anchor.probability_map,
+            ranking=_ranking_payload(ranked, extra_fields_by_model=extra_fields_by_model),
+            reason=(
+                f"Kept anchor model {anchor.model_name} because trust={anchor_trust:.3f} exceeded the stay threshold "
+                f"and no challenger cleared the early challenge gate."
+            ),
+        )
+
+    hard_prior_veto = (
+        prior_margin <= strong_negative_prior_veto
+        or similarity_margin <= strong_negative_similarity_veto
+    )
+
     if (
+        not hard_prior_veto
+        and
         score_gain >= effective_override_score_margin
         and trust_gain >= effective_override_trust_margin
         and disagreement >= override_min_disagreement
@@ -250,18 +275,31 @@ def _select_prediction_anchor_override(
             ),
         )
 
+    if anchor_trust >= anchor_trust_threshold:
+        keep_reason = (
+            f"Kept anchor {anchor.model_name}; anchor trust remained high at {anchor_trust:.3f} after challenger review "
+            f"(best_alt={best_alt.model_name}, score_gain={score_gain:.3f}, trust_gain={trust_gain:.3f}, "
+            f"prior_margin={prior_margin:.3f}, similarity_margin={similarity_margin:.3f})."
+        )
+    elif hard_prior_veto:
+        keep_reason = (
+            f"Kept anchor {anchor.model_name}; best alternative {best_alt.model_name} was vetoed by source priors "
+            f"(prior_margin={prior_margin:.3f}, similarity_margin={similarity_margin:.3f})."
+        )
+    else:
+        keep_reason = (
+            f"Kept anchor {anchor.model_name}; best alternative {best_alt.model_name} did not clear the override criteria "
+            f"(score_gain={score_gain:.3f}, trust_gain={trust_gain:.3f}, disagreement={disagreement:.3f}, "
+            f"prior_margin={prior_margin:.3f}, similarity_margin={similarity_margin:.3f}, "
+            f"effective_score_margin={effective_override_score_margin:.3f})."
+        )
     return EnsembleDecision(
         decision_mode="anchor_keep",
         selected_model=anchor.model_name,
         final_mask=anchor.mask,
         final_probability_map=anchor.probability_map,
         ranking=_ranking_payload(ranked, extra_fields_by_model=extra_fields_by_model),
-        reason=(
-            f"Kept anchor {anchor.model_name}; best alternative {best_alt.model_name} did not clear the override criteria "
-            f"(score_gain={score_gain:.3f}, trust_gain={trust_gain:.3f}, disagreement={disagreement:.3f}, "
-            f"prior_margin={prior_margin:.3f}, similarity_margin={similarity_margin:.3f}, "
-            f"effective_score_margin={effective_override_score_margin:.3f})."
-        ),
+        reason=keep_reason,
     )
 
 
