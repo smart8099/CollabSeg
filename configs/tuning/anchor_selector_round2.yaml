@@ -1,0 +1,21 @@
+mode: ensemble
+ensemble_config: configs/ensemble/anchor_unetv2.yaml
+split_csv: datasets/agentpolyp_2504/unified_split/manifests/val.csv
+root_dir: datasets/agentpolyp_2504/unified_split
+device: cuda
+batch_size: 8
+metric: selector_dice
+maximize: true
+output_dir: outputs/selector_tuning_anchor_round2
+
+search:
+  include_baseline: true
+  num_trials: 20
+  random_seed: 43
+  parameters:
+    override_min_alt_trust:
+      path: scoring.policy.anchor.override_min_alt_trust
+      values: [0.70, 0.72, 0.74, 0.76]
+    override_min_disagreement:
+      path: scoring.policy.anchor.override_min_disagreement
+      values: [0.10, 0.12, 0.15, 0.20]
