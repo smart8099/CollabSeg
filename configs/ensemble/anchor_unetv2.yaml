@@ -1,0 +1,46 @@
+registry:
+  models:
+    - name: unet
+      checkpoint: outputs/polyp_segmentation_baseline_unet_ep80/best_model.pt
+    - name: unetpp
+      checkpoint: outputs/polyp_segmentation_baseline_unetpp_ep80/best_model.pt
+    - name: unetv2
+      checkpoint: outputs/polyp_segmentation_baseline_unetv2_ep80_narrow/best_model.pt
+    - name: deeplabv3plus
+      checkpoint: outputs/polyp_segmentation_baseline_deeplabv3plus_ep80/best_model.pt
+
+scoring:
+  threshold: 0.5
+  weights:
+    confidence: 0.30
+    agreement: 0.20
+    shape: 0.30
+    boundary: 0.20
+    prompt: 0.00
+  shape:
+    min_area_ratio: 0.001
+    max_area_ratio: 0.6
+    max_components: 6
+  policy:
+    selector_mode: anchor_override
+    consensus_iou_threshold: 0.75
+    top_score_margin: 0.05
+    fuse_iou_threshold: 0.55
+    fuse_top_k: 2
+    anchor:
+      model_name: unetv2
+      trust_weights:
+        confidence: 0.35
+        agreement: 0.15
+        shape: 0.30
+        boundary: 0.20
+      trust_threshold: 0.74
+      override_score_margin: 0.08
+      override_trust_margin: 0.02
+      override_min_disagreement: 0.10
+      override_min_alt_trust: 0.70
+      allow_fusion: false
+      fusion_score_margin: 0.03
+      fusion_iou_threshold: 0.85
+      fusion_min_anchor_trust: 0.74
+      fusion_min_alt_trust: 0.74
