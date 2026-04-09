@@ -92,6 +92,8 @@ def main() -> None:
     parser.add_argument("--model-config", type=str, required=True)
     parser.add_argument("--checkpoint", type=str, required=True)
     parser.add_argument("--split", type=str, choices=["val", "test"], default="test")
+    parser.add_argument("--batch-size", type=int, default=1)
+    parser.add_argument("--num-workers", type=int, default=-1)
     parser.add_argument("--output-json", type=str, default="")
     args = parser.parse_args()
 
@@ -133,9 +135,9 @@ def main() -> None:
         )
         loader = DataLoader(
             dataset,
-            batch_size=int(config["train"]["batch_size"]),
+            batch_size=max(1, int(args.batch_size)),
             shuffle=False,
-            num_workers=int(config["num_workers"]),
+            num_workers=int(config["num_workers"]) if int(args.num_workers) < 0 else max(0, int(args.num_workers)),
             pin_memory=bool(config["pin_memory"]),
         )
         metrics = evaluate(model=model, loader=loader, criterion=criterion, device=device)
@@ -145,10 +147,12 @@ def main() -> None:
         }
 
     macro_metrics: dict[str, float] = {}
+    weighted_metrics: dict[str, float] = {}
     if per_dataset:
         metric_keys = [key for key in next(iter(per_dataset.values())).keys() if key != "num_samples"]
         for key in metric_keys:
             macro_metrics[key] = sum(float(item[key]) for item in per_dataset.values()) / len(per_dataset)
+            weighted_metrics[key] = sum(float(item[key]) * int(item["num_samples"]) for item in per_dataset.values()) / len(rows)
 
     payload = {
         "split": args.split,
@@ -157,6 +161,7 @@ def main() -> None:
         "num_datasets": len(per_dataset),
         "num_samples": len(rows),
         "macro_average": macro_metrics,
+        "weighted_average": weighted_metrics,
         "per_dataset": per_dataset,
     }
 
